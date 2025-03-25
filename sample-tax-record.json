@@ -1,0 +1,8 @@
+{
+  "tax_type": "Direct",
+  "tax_name": "Income Tax",
+  "amount": 1250.50,
+  "date_of_payment": "2023-12-15",
+  "status": "Paid",
+  "notes": "Annual income tax payment"
+} 
