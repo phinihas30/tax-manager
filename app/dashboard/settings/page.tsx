@@ -35,22 +35,28 @@ export default function SettingsPage() {
     const fetchUser = async () => {
       setIsLoading(true);
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // Get the authenticated user (more secure than session)
+        const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
         
-        if (session?.user) {
-          setUser(session.user);
+        if (userError) {
+          console.error('Error getting authenticated user:', userError);
+          return;
+        }
+        
+        if (authUser) {
+          setUser(authUser);
           
           // Get avatar URL if it exists
-          if (session.user.user_metadata?.avatar_url) {
-            setAvatarUrl(session.user.user_metadata.avatar_url);
+          if (authUser.user_metadata?.avatar_url) {
+            setAvatarUrl(authUser.user_metadata.avatar_url);
           }
           
           // In a real app, you'd fetch user preferences from a database here
           // For demo purposes, we'll just set the email
           setFormData(prev => ({
             ...prev,
-            name: session.user.user_metadata?.full_name || '',
-            email: session.user.email || ''
+            name: authUser.user_metadata?.full_name || '',
+            email: authUser.email || ''
           }));
         }
       } catch (error) {

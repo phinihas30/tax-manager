@@ -2,79 +2,337 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { FiUser, FiMail, FiPhone, FiMapPin, FiClock, FiFileText, FiEdit, FiUpload } from 'react-icons/fi';
-import { createBrowserClient } from '@supabase/ssr';
+import { FiUser, FiMail, FiPhone, FiMapPin, FiClock, FiFileText, FiEdit, FiUpload, FiSave } from 'react-icons/fi';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { TaxRecord } from '@/types/supabase';
+import { toast } from 'react-hot-toast';
+
+interface ProfileData {
+  full_name: string;
+  email: string;
+  phone: string;
+  address: string;
+  bio: string;
+  tax_id: string;
+}
+
+interface DebugInfo {
+  [key: string]: any;
+}
 
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<any>({
-    full_name: 'phinihas',
-    email: 'phinnu@gmail.com',
-    phone: '+91 98765 43210',
-    address: 'Mumbai, Maharashtra, India',
-    bio: 'Tax professional with over 5 years of experience in managing direct and indirect taxes.',
-    tax_id: 'ABCDE1234F'
+  const [profile, setProfile] = useState<ProfileData>({
+    full_name: '',
+    email: '',
+    phone: '',
+    address: '',
+    bio: '',
+    tax_id: ''
   });
   const [recentRecords, setRecentRecords] = useState<TaxRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState({ ...profile });
-
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
+  const [showDebug, setShowDebug] = useState(false);
+  const supabase = createClientComponentClient();
 
   useEffect(() => {
     const fetchUserData = async () => {
-      setIsLoading(true);
       try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        // Get authenticated user (more secure approach)
+        const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
         
-        if (userError || !user) {
-          throw new Error('Not authenticated');
+        if (userError) {
+          console.error('Error getting authenticated user:', userError);
+          router.push('/auth/signin');
+          return;
         }
         
-        setUser(user);
-        setProfile((prev: typeof profile) => ({ ...prev, email: user.email }));
-        setFormData((prev: typeof formData) => ({ ...prev, email: user.email }));
-        
+        if (!authUser) {
+          router.push('/auth/signin');
+          return;
+        }
+
+        setUser(authUser);
+
+        // Fetch user profile data
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .single();
+
+        if (profileError && profileError.code !== 'PGRST116') {
+          console.error('Error fetching profile:', profileError);
+          throw profileError;
+        }
+
+        if (profileData) {
+          setProfile({
+            full_name: profileData.full_name || '',
+            email: authUser.email || '',
+            phone: profileData.phone || '',
+            address: profileData.address || '',
+            bio: profileData.bio || '',
+            tax_id: profileData.tax_id || ''
+          });
+        } else {
+          // If no profile exists, create one with default values
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert([
+              {
+                id: authUser.id,
+                full_name: '',
+                email: authUser.email,
+                phone: '',
+                address: '',
+                bio: '',
+                tax_id: ''
+              }
+            ]);
+
+          if (insertError) {
+            console.error('Error creating profile:', insertError);
+            throw insertError;
+          }
+        }
+
         // Fetch the most recent tax records
         const { data: records, error: recordsError } = await supabase
           .from('tax_records')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', authUser.id)
           .order('created_at', { ascending: false })
           .limit(5);
           
         if (recordsError) {
+          console.error('Error fetching tax records:', recordsError);
           throw recordsError;
         }
         
         setRecentRecords(records || []);
       } catch (error) {
         console.error('Error fetching user data:', error);
-        router.push('/auth/signin');
+        toast.error('Failed to load profile data');
       } finally {
         setIsLoading(false);
       }
     };
-    
+
     fetchUserData();
-  }, []);
+  }, [router, supabase]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
+    setProfile(prev => ({
+      ...prev,
+      [name]: value
+    }));
   };
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // In a real application, you would update the profile in the database
-    setProfile(formData);
-    setIsEditing(false);
+  const handleSaveProfile = async () => {
+    if (!user) {
+      toast.error('User not found. Please sign in again.');
+      return;
+    }
+
+    setIsSaving(true);
+    setDebugInfo({});
+    
+    try {
+      const updateData = {
+        id: user.id,
+        full_name: profile.full_name,
+        phone: profile.phone,
+        address: profile.address,
+        bio: profile.bio,
+        tax_id: profile.tax_id
+      };
+      
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, updateData }));
+      console.log('Updating profile with data:', updateData);
+
+      // Update the profile
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          full_name: profile.full_name,
+          phone: profile.phone,
+          address: profile.address,
+          bio: profile.bio,
+          tax_id: profile.tax_id,
+        }, {
+          onConflict: 'id'
+        })
+        .select()
+        .single();
+          
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, operation: 'upsert', profileData, profileError }));
+
+      if (profileError) {
+        console.error('Profile update error:', profileError);
+        throw profileError;
+      }
+
+      console.log('Profile updated successfully:', profileData);
+
+      // Then, update user metadata
+      const { data: userData, error: userError } = await supabase.auth.updateUser({
+        data: {
+          full_name: profile.full_name
+        }
+      });
+
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, userData, userError }));
+      
+      if (userError) {
+        console.error('User metadata update error:', userError);
+        throw userError;
+      }
+
+      console.log('User metadata updated successfully:', userData);
+
+      // Refresh user data using getUser (more secure)
+      const { data: { user: refreshedUser }, error: refreshUserError } = await supabase.auth.getUser();
+      
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, refreshedUser, refreshUserError }));
+      
+      if (refreshUserError) {
+        console.error('User refresh error:', refreshUserError);
+        throw refreshUserError;
+      }
+
+      // Update the local user state
+      setUser(refreshedUser);
+
+      // Dispatch a custom event to notify other components about the profile update
+      const eventDetail = { 
+        user: refreshedUser,
+        profile: profileData
+      };
+      
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, eventDetail }));
+      
+      window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+        detail: eventDetail
+      }));
+
+      // Refresh the profile data
+      const { data: refreshedProfile, error: refreshError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, refreshedProfile, refreshError }));
+      
+      if (refreshError) {
+        console.error('Profile refresh error:', refreshError);
+        throw refreshError;
+      }
+
+      if (refreshedProfile) {
+        setProfile({
+          full_name: refreshedProfile.full_name || '',
+          email: refreshedUser?.email || '',
+          phone: refreshedProfile.phone || '',
+          address: refreshedProfile.address || '',
+          bio: refreshedProfile.bio || '',
+          tax_id: refreshedProfile.tax_id || ''
+        });
+        
+        setDebugInfo((prev: DebugInfo) => ({ ...prev, finalProfile: refreshedProfile }));
+      }
+
+      toast.success('Profile updated successfully');
+      setIsEditing(false);
+
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, error }));
+      toast.error('Failed to update profile. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const initializeProfile = async () => {
+    if (!user) {
+      toast.error('User not found. Please sign in again.');
+      return;
+    }
+
+    try {
+      // First, try to create a new profile
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          full_name: profile.full_name || '',
+          email: user.email,
+          phone: profile.phone || '',
+          address: profile.address || '',
+          bio: profile.bio || '',
+          tax_id: profile.tax_id || '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'id'
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error initializing profile:', error);
+        toast.error('Failed to initialize profile');
+        return;
+      }
+
+      console.log('Profile initialized:', data);
+      toast.success('Profile initialized successfully');
+
+      // Refresh the data
+      const { data: refreshData, error: refreshError } = await supabase.auth.getSession();
+      if (refreshError) {
+        console.error('Error refreshing session:', refreshError);
+        return;
+      }
+
+      if (refreshData.session?.user) {
+        setUser(refreshData.session.user);
+        
+        // Fetch the profile again
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', refreshData.session.user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Error fetching profile:', profileError);
+          return;
+        }
+
+        if (profileData) {
+          setProfile({
+            full_name: profileData.full_name || '',
+            email: refreshData.session.user.email || '',
+            phone: profileData.phone || '',
+            address: profileData.address || '',
+            bio: profileData.bio || '',
+            tax_id: profileData.tax_id || ''
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error initializing profile:', error);
+      toast.error('Failed to initialize profile');
+    }
   };
 
   // Calculate some statistics
@@ -85,301 +343,199 @@ export default function ProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in">
-      <div className="mb-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
-            <p className="text-gray-600 mt-1">Manage your account information and preferences</p>
-          </div>
-          <button
-            onClick={() => setIsEditing(!isEditing)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            <FiEdit className="mr-2 h-4 w-4" />
-            {isEditing ? 'Cancel' : 'Edit Profile'}
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 space-y-5">
-          {/* Profile Information */}
-          <div className="dashboard-card bg-white overflow-hidden rounded-lg shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Profile Information</h2>
-            </div>
-            {isEditing ? (
-              <div className="p-6">
-                <form onSubmit={handleSaveProfile} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-1">
-                        Full Name
-                      </label>
-                      <input
-                        type="text"
-                        id="full_name"
-                        name="full_name"
-                        value={formData.full_name}
-                        onChange={handleInputChange}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-                        Email
-                      </label>
-                      <input
-                        type="email"
-                        id="email"
-                        name="email"
-                        value={formData.email}
-                        readOnly
-                        className="w-full rounded-md border-gray-300 bg-gray-100 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                        Phone
-                      </label>
-                      <input
-                        type="text"
-                        id="phone"
-                        name="phone"
-                        value={formData.phone}
-                        onChange={handleInputChange}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
-                        Address
-                      </label>
-                      <input
-                        type="text"
-                        id="address"
-                        name="address"
-                        value={formData.address}
-                        onChange={handleInputChange}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="tax_id" className="block text-sm font-medium text-gray-700 mb-1">
-                        Tax ID / PAN
-                      </label>
-                      <input
-                        type="text"
-                        id="tax_id"
-                        name="tax_id"
-                        value={formData.tax_id}
-                        onChange={handleInputChange}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label htmlFor="bio" className="block text-sm font-medium text-gray-700 mb-1">
-                      Bio
-                    </label>
-                    <textarea
-                      id="bio"
-                      name="bio"
-                      rows={4}
-                      value={formData.bio}
-                      onChange={handleInputChange}
-                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    />
-                  </div>
-                  
-                  <div className="flex justify-end">
-                    <button
-                      type="submit"
-                      className="btn-gradient inline-flex items-center px-4 py-2 border-0 text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200"
-                    >
-                      Save Changes
-                    </button>
-                  </div>
-                </form>
-              </div>
+    <div className="max-w-4xl mx-auto p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profile Settings</h1>
+          <div className="space-x-2">
+            {!isEditing ? (
+              <>
+                <button
+                  onClick={initializeProfile}
+                  className="inline-flex items-center px-4 py-2 border border-yellow-500 rounded-md shadow-sm text-sm font-medium text-yellow-700 bg-white hover:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+                >
+                  Initialize Profile
+                </button>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  <FiEdit className="h-4 w-4 mr-2" />
+                  Edit Profile
+                </button>
+              </>
             ) : (
-              <div className="p-6">
-                <div className="flex items-start">
-                  <div className="flex-shrink-0 mr-4">
-                    <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500 text-2xl font-bold">
-                      {profile.full_name.split(' ').map((n: string) => n[0]).join('')}
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-medium text-gray-900">{profile.full_name}</h3>
-                    <p className="text-sm text-gray-500">{profile.bio}</p>
-                    
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="flex items-center text-sm text-gray-500">
-                        <FiMail className="mr-2 h-4 w-4 text-gray-400" />
-                        {profile.email}
-                      </div>
-                      <div className="flex items-center text-sm text-gray-500">
-                        <FiPhone className="mr-2 h-4 w-4 text-gray-400" />
-                        {profile.phone}
-                      </div>
-                      <div className="flex items-center text-sm text-gray-500">
-                        <FiMapPin className="mr-2 h-4 w-4 text-gray-400" />
-                        {profile.address}
-                      </div>
-                      <div className="flex items-center text-sm text-gray-500">
-                        <FiUser className="mr-2 h-4 w-4 text-gray-400" />
-                        Tax ID: {profile.tax_id}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className="space-x-2">
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={isSaving}
+                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <FiSave className="h-4 w-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>
-
-          {/* Recent Activity */}
-          <div className="dashboard-card bg-white overflow-hidden rounded-lg shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Recent Activity</h2>
+        </div>
+        
+        <div className="space-y-6">
+          {/* Profile Picture */}
+          <div className="flex items-center space-x-4">
+            <div className="relative">
+              <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                <FiUser className="w-12 h-12 text-gray-500 dark:text-gray-400" />
+              </div>
             </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                {recentRecords.length === 0 ? (
-                  <p className="text-sm text-gray-500">No recent tax records found.</p>
-                ) : (
-                  recentRecords.map((record) => (
-                    <div key={record.id} className="flex items-start border-b border-gray-100 pb-4 last:border-0 last:pb-0">
-                      <div className={`p-2 rounded-md ${record.tax_type === 'Direct' ? 'bg-blue-100' : 'bg-green-100'} mr-3`}>
-                        <FiFileText className={`h-5 w-5 ${record.tax_type === 'Direct' ? 'text-blue-600' : 'text-green-600'}`} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{record.tax_name}</p>
-                            <p className="text-xs text-gray-500">{record.tax_type} Tax • {record.status}</p>
-                          </div>
-                          <div className="text-sm font-medium text-gray-900">₹{Number(record.amount).toFixed(2)}</div>
-                        </div>
-                        <div className="flex items-center mt-1">
-                          <FiClock className="h-3 w-3 text-gray-400 mr-1" />
-                          <p className="text-xs text-gray-500">
-                            {new Date(record.date_of_payment).toLocaleDateString()}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{profile.full_name || 'Your Name'}</h2>
+              <p className="text-gray-500 dark:text-gray-400">{profile.email}</p>
+            </div>
+          </div>
+
+          {/* Profile Form */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Full Name</label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FiUser className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  name="full_name"
+                  value={profile.full_name}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                  placeholder="Enter your full name"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FiMail className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="email"
+                  value={profile.email}
+                  disabled
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 dark:text-white sm:text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Phone Number</label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FiPhone className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="tel"
+                  name="phone"
+                  value={profile.phone}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                  placeholder="Enter your phone number"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Address</label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FiMapPin className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  name="address"
+                  value={profile.address}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                  placeholder="Enter your address"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Tax ID</label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FiFileText className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  name="tax_id"
+                  value={profile.tax_id}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                  placeholder="Enter your tax ID"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Bio</label>
+              <div className="mt-1">
+                <textarea
+                  name="bio"
+                  value={profile.bio}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  rows={3}
+                  className="block w-full border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                  placeholder="Tell us about yourself"
+                />
               </div>
             </div>
           </div>
         </div>
-
-        <div className="space-y-5">
-          {/* Account Summary */}
-          <div className="dashboard-card bg-white overflow-hidden rounded-lg shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Account Summary</h2>
+        
+        <div className="mt-8">
+          <button 
+            onClick={() => setShowDebug(!showDebug)}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {showDebug ? 'Hide Debug Info' : 'Show Debug Info'}
+          </button>
+          
+          {showDebug && (
+            <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-md text-xs overflow-auto max-h-96">
+              <pre className="whitespace-pre-wrap break-all">
+                {JSON.stringify(debugInfo, null, 2)}
+              </pre>
             </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                <div>
-                  <p className="text-sm text-gray-500">Member Since</p>
-                  <p className="text-lg font-medium text-gray-900">
-                    {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-                  </p>
-                </div>
-                
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-sm text-gray-500">Total Tax Records</p>
-                  <p className="text-lg font-medium text-gray-900">{totalRecords}</p>
-                </div>
-                
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-sm text-gray-500">Total Amount</p>
-                  <p className="text-lg font-medium text-gray-900">₹{totalAmount.toFixed(2)}</p>
-                </div>
-                
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-sm text-gray-500">Tax Distribution</p>
-                  <div className="flex space-x-4 mt-2">
-                    <div className="text-center">
-                      <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mx-auto">
-                        <span className="text-blue-600 font-medium">{directTaxRecords.length}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">Direct</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-                        <span className="text-green-600 font-medium">{indirectTaxRecords.length}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">Indirect</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Profile Settings */}
-          <div className="dashboard-card bg-white overflow-hidden rounded-lg shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Profile Settings</h2>
-            </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                <button className="w-full flex items-center justify-between p-3 text-left border border-gray-200 rounded-lg hover:bg-gray-50">
-                  <div className="flex items-center">
-                    <FiUpload className="h-5 w-5 text-gray-400 mr-3" />
-                    <span className="text-sm font-medium text-gray-900">Change Profile Picture</span>
-                  </div>
-                </button>
-                
-                <button className="w-full flex items-center justify-between p-3 text-left border border-gray-200 rounded-lg hover:bg-gray-50">
-                  <div className="flex items-center">
-                    <FiEdit className="h-5 w-5 text-gray-400 mr-3" />
-                    <span className="text-sm font-medium text-gray-900">Change Password</span>
-                  </div>
-                </button>
-                
-                <div className="pt-4 border-t border-gray-100">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-medium text-gray-900">Email Notifications</p>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" className="sr-only peer" defaultChecked />
-                      <div className="w-10 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
-                  <p className="text-xs text-gray-500">Receive notifications about tax updates and due dates</p>
-                </div>
-                
-                <div className="pt-4 border-t border-gray-100">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-medium text-gray-900">Two-Factor Authentication</p>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" className="sr-only peer" />
-                      <div className="w-10 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
-                  <p className="text-xs text-gray-500">Enable two-factor authentication for added security</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
