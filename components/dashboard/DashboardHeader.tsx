@@ -79,20 +79,41 @@ const DashboardHeader: React.FC = () => {
     const handleProfileUpdate = (event: CustomEvent) => {
       console.log('Received profile update event:', event.detail);
       
-      setDebugEvents((prev: any[]) => [
-        { 
-          type: 'profile_update_event', 
-          timestamp: new Date().toISOString(),
-          data: event.detail 
-        },
-        ...prev.slice(0, 4)  // Keep only the last 5 events
-      ]);
+      // Add to debug events asynchronously to prevent UI blocking
+      setTimeout(() => {
+        setDebugEvents((prev: any[]) => [
+          { 
+            type: 'profile_update_event', 
+            timestamp: new Date().toISOString(),
+            data: event.detail 
+          },
+          ...prev.slice(0, 4)  // Keep only the last 5 events
+        ]);
+      }, 0);
       
       if (event.detail) {
-        const { user, profile } = event.detail;
-        if (user) {
-          setUser(user);
-          console.log('User state updated in header:', user);
+        const { user: updatedUser, profileDeleted } = event.detail;
+        
+        // Handle profile deletion event specifically
+        if (profileDeleted) {
+          console.log('Profile deleted event received in header');
+          // Just update the user state, but don't try to access profile data
+          if (updatedUser) {
+            // Use a microtask to update state without blocking
+            Promise.resolve().then(() => {
+              setUser(updatedUser);
+            });
+          }
+          return;
+        }
+        
+        // Normal profile update
+        if (updatedUser) {
+          // Use a microtask to update state without blocking
+          Promise.resolve().then(() => {
+            setUser(updatedUser);
+            console.log('User state updated in header:', updatedUser);
+          });
         }
       }
     };

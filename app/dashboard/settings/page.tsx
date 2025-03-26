@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { FiSave, FiUser, FiMail, FiLock, FiBell, FiShield, FiGlobe, FiFileText } from 'react-icons/fi';
 import { ThemeToggleWithLabel } from '@/components/ThemeToggle';
+import { useRouter } from 'next/navigation';
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
@@ -11,6 +12,8 @@ export default function SettingsPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -20,11 +23,15 @@ export default function SettingsPage() {
     notificationsBrowser: true,
     notificationFrequency: 'immediately',
     theme: 'light',
-    dateFormat: 'DD/MM/YYYY'
+    dateFormat: 'DD/MM/YYYY',
+    taxYearStart: 'april',
+    taxYearEnd: 'march',
+    reminderAdvance: true
   });
   const [activeTab, setActiveTab] = useState('profile');
   const [saveStatus, setSaveStatus] = useState('');
   const [saveError, setSaveError] = useState('');
+  const router = useRouter();
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,20 +111,27 @@ export default function SettingsPage() {
       if (data.user) {
         setUser(data.user);
         
-        // Refresh the user session to update the metadata everywhere
-        const { data: refreshData } = await supabase.auth.refreshSession();
+        // Get the latest user data directly with getUser instead of refreshSession
+        // This avoids potential navigation issues
+        const { data: latestUserData, error: userError } = await supabase.auth.getUser();
         
-        // Update user metadata in localStorage for components that read from there
-        if (refreshData.session) {
-          localStorage.setItem('supabase.auth.token', JSON.stringify({
-            currentSession: refreshData.session,
-            expiresAt: Math.floor(Date.now() / 1000) + refreshData.session.expires_in
-          }));
-          
-          // Dispatch a custom event to notify other components about the profile update
-          window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
-            detail: { user: refreshData.session.user }
-          }));
+        if (userError) {
+          console.error('Error getting updated user:', userError);
+          throw userError;
+        }
+        
+        if (latestUserData.user) {
+          // Use setTimeout to prevent UI blocking when dispatching the event
+          setTimeout(() => {
+            // Dispatch a custom event to notify other components about the profile update
+            window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+              detail: { 
+                user: latestUserData.user,
+                timestamp: new Date().toISOString()
+              }
+            }));
+            console.log('Dispatched userProfileUpdated event from settings');
+          }, 0);
         }
       }
       
@@ -127,7 +141,7 @@ export default function SettingsPage() {
       // Show success notification
       const notification = document.getElementById('notification-banner');
       if (notification) {
-        notification.innerText = 'Profile updated successfully!';
+        notification.innerText = 'Settings updated successfully!';
         notification.className = 'fixed bottom-4 right-4 bg-green-50 text-green-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-100';
         setTimeout(() => {
           notification.className = 'fixed bottom-4 right-4 bg-green-50 text-green-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-0';
@@ -199,7 +213,7 @@ export default function SettingsPage() {
         .getPublicUrl(fileName);
       
       // Update user metadata with avatar URL
-      const { error: updateError, data: userData } = await supabase.auth.updateUser({
+      const { error: updateError, data: updatedUserData } = await supabase.auth.updateUser({
         data: { avatar_url: publicUrl }
       });
       
@@ -209,23 +223,25 @@ export default function SettingsPage() {
       setAvatarUrl(publicUrl);
       
       // Update the user state if the update was successful
-      if (userData.user) {
-        setUser(userData.user);
+      if (updatedUserData.user) {
+        setUser(updatedUserData.user);
         
-        // Refresh the user session to update the metadata everywhere
-        const { data: refreshData } = await supabase.auth.refreshSession();
+        // Get the latest user data directly with getUser instead of refreshSession
+        // This avoids potential navigation issues
+        const { data: latestUserData } = await supabase.auth.getUser();
         
-        // Update user metadata in localStorage for components that read from there
-        if (refreshData.session) {
-          localStorage.setItem('supabase.auth.token', JSON.stringify({
-            currentSession: refreshData.session,
-            expiresAt: Math.floor(Date.now() / 1000) + refreshData.session.expires_in
-          }));
-          
-          // Dispatch a custom event to notify other components about the profile update
-          window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
-            detail: { user: refreshData.session.user }
-          }));
+        if (latestUserData.user) {
+          // Use setTimeout to prevent UI blocking when dispatching the event
+          setTimeout(() => {
+            // Dispatch a custom event to notify other components about the profile update
+            window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+              detail: { 
+                user: latestUserData.user,
+                timestamp: new Date().toISOString()
+              }
+            }));
+            console.log('Dispatched userProfileUpdated event from settings');
+          }, 0);
         }
       }
       
@@ -293,6 +309,80 @@ export default function SettingsPage() {
       setTimeout(() => {
         notification.className = 'fixed bottom-4 right-4 bg-indigo-50 text-indigo-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-0';
       }, 5000);
+    }
+  };
+
+  const handleDeleteProfile = async () => {
+    if (!user) {
+      alert('User not found. Please sign in again.');
+      return;
+    }
+
+    setIsDeleting(true);
+    
+    try {
+      console.log('Deleting profile for user:', user.id);
+      
+      // Delete the user's profile from the profiles table
+      const { error: deleteProfileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', user.id);
+      
+      if (deleteProfileError) {
+        console.error('Error deleting profile:', deleteProfileError);
+        throw deleteProfileError;
+      }
+
+      console.log('Profile deleted successfully');
+      
+      setShowDeleteConfirm(false);
+      
+      // Get the current user data to ensure we have the latest
+      const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error('Error getting current user:', userError);
+      } else if (currentUser) {
+        setUser(currentUser);
+        
+        // Dispatch an event to notify other components about the profile deletion
+        try {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+              detail: { 
+                user: currentUser,
+                profileDeleted: true,
+                timestamp: new Date().toISOString()
+              }
+            }));
+            console.log('Dispatched profile deletion event from settings');
+          }, 0);
+        } catch (e) {
+          console.error('Failed to dispatch profile deletion event:', e);
+        }
+      }
+      
+      // Show success notification
+      const notification = document.getElementById('notification-banner');
+      if (notification) {
+        notification.innerText = 'Profile data deleted successfully. Your account is still active.';
+        notification.className = 'fixed bottom-4 right-4 bg-green-50 text-green-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-100';
+        setTimeout(() => {
+          notification.className = 'fixed bottom-4 right-4 bg-green-50 text-green-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-0';
+        }, 3000);
+      }
+      
+      // Redirect to dashboard after successful deletion
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error during profile deletion:', error);
+      alert('Failed to delete profile. Please try again.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -536,6 +626,20 @@ export default function SettingsPage() {
                         Sign out of all sessions
                       </button>
                     </div>
+
+                    <div className="pt-4 border-t border-gray-200 dark:border-dark-border">
+                      <h3 className="text-sm font-medium text-red-600 dark:text-red-400">Delete Profile Data</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Delete your profile information from our system. Your account will remain active, but your profile data will be removed.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="mt-3 inline-flex items-center px-3 py-2 border border-red-300 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-500 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                      >
+                        Delete Profile Data
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -546,6 +650,8 @@ export default function SettingsPage() {
                   <h2 className="text-lg font-medium text-gray-900 dark:text-dark-text mb-4">Preferences</h2>
                   <div className="space-y-6">
                     <div className="mb-6">
+                      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Theme</h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Choose between light and dark theme</p>
                       <ThemeToggleWithLabel />
                     </div>
                     
@@ -562,9 +668,8 @@ export default function SettingsPage() {
                       >
                         <option value="en">English</option>
                         <option value="hi">Hindi</option>
-                        <option value="te">Telugu</option>
-                        <option value="ta">Tamil</option>
                         <option value="kn">Kannada</option>
+                        <option value="te">Telugu</option>
                       </select>
                     </div>
                     
@@ -581,8 +686,6 @@ export default function SettingsPage() {
                       >
                         <option value="INR">Indian Rupee (₹)</option>
                         <option value="USD">US Dollar ($)</option>
-                        <option value="EUR">Euro (€)</option>
-                        <option value="GBP">British Pound (£)</option>
                       </select>
                     </div>
                     
@@ -783,11 +886,11 @@ export default function SettingsPage() {
                   <div className="space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Default Tax Categories
+                        Indian Tax Categories
                       </label>
                       <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-md">
                         <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                          These categories are used throughout the app. You can't edit system categories.
+                          Common tax categories in India. These are used throughout the app.
                         </p>
                         <ul className="space-y-1">
                           <li className="text-sm flex items-center justify-between">
@@ -816,7 +919,7 @@ export default function SettingsPage() {
                     
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Tax Year Settings
+                        Financial Year Settings
                       </label>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -829,8 +932,7 @@ export default function SettingsPage() {
                             className="mt-1 block w-full rounded-md border-gray-300 dark:border-dark-border dark:bg-dark-card dark:text-dark-text shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                             defaultValue="april"
                           >
-                            <option value="january">January</option>
-                            <option value="april">April</option>
+                            <option value="april">April (Indian FY)</option>
                           </select>
                         </div>
                         <div>
@@ -844,11 +946,13 @@ export default function SettingsPage() {
                             defaultValue="march"
                             disabled
                           >
-                            <option value="december">December</option>
                             <option value="march">March</option>
                           </select>
                         </div>
                       </div>
+                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Indian financial year runs from April 1 to March 31
+                      </p>
                     </div>
                     
                     <div>
@@ -923,6 +1027,44 @@ export default function SettingsPage() {
         id="notification-banner" 
         className="fixed bottom-4 right-4 bg-green-50 text-green-800 px-4 py-2 rounded-md shadow-lg transition-opacity duration-500 opacity-0"
       ></div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Profile Data</h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-4">
+              Are you sure you want to delete your profile data? This action cannot be undone.
+            </p>
+            <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">
+              <strong>Note:</strong> This will only remove your profile information (name, phone, address, etc.). 
+              Your account will remain active and you can recreate your profile anytime.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteProfile}
+                disabled={isDeleting}
+                className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2 inline-block"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete Profile Data'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

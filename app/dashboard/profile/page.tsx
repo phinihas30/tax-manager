@@ -37,6 +37,8 @@ export default function ProfilePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
   const [showDebug, setShowDebug] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const supabase = createClientComponentClient();
 
   useEffect(() => {
@@ -144,6 +146,8 @@ export default function ProfilePage() {
     setDebugInfo({});
     
     try {
+      console.log('Starting profile update...');
+      
       const updateData = {
         id: user.id,
         full_name: profile.full_name,
@@ -153,8 +157,24 @@ export default function ProfilePage() {
         tax_id: profile.tax_id
       };
       
-      setDebugInfo((prev: DebugInfo) => ({ ...prev, updateData }));
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, updateAt: new Date().toISOString(), updateData }));
       console.log('Updating profile with data:', updateData);
+
+      // First, check if the profile exists
+      const { data: existingProfile, error: checkError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      
+      setDebugInfo((prev: DebugInfo) => ({ ...prev, existingProfile, checkError }));
+      
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error checking profile existence:', checkError);
+        throw checkError;
+      }
+      
+      console.log('Existing profile check result:', existingProfile || 'No profile found');
 
       // Update the profile
       const { data: profileData, error: profileError } = await supabase
@@ -166,6 +186,7 @@ export default function ProfilePage() {
           address: profile.address,
           bio: profile.bio,
           tax_id: profile.tax_id,
+          updated_at: new Date().toISOString() // Force update the timestamp
         }, {
           onConflict: 'id'
         })
@@ -197,7 +218,8 @@ export default function ProfilePage() {
 
       console.log('User metadata updated successfully:', userData);
 
-      // Refresh user data using getUser (more secure)
+      // Avoid using refreshSession as it may cause navigation issues
+      // Instead, just get the current user
       const { data: { user: refreshedUser }, error: refreshUserError } = await supabase.auth.getUser();
       
       setDebugInfo((prev: DebugInfo) => ({ ...prev, refreshedUser, refreshUserError }));
@@ -209,20 +231,35 @@ export default function ProfilePage() {
 
       // Update the local user state
       setUser(refreshedUser);
+      
+      // Don't manually update localStorage, as this can cause conflicts
+      // Instead, use a more reliable event method
 
       // Dispatch a custom event to notify other components about the profile update
       const eventDetail = { 
         user: refreshedUser,
-        profile: profileData
+        profile: profileData,
+        timestamp: new Date().toISOString()
       };
       
       setDebugInfo((prev: DebugInfo) => ({ ...prev, eventDetail }));
       
-      window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
-        detail: eventDetail
-      }));
+      try {
+        // Use a timeout to prevent event handling from blocking UI
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+            detail: eventDetail
+          }));
+          console.log('Dispatched userProfileUpdated event with:', eventDetail);
+        }, 0);
+        
+        setDebugInfo((prev: DebugInfo) => ({ ...prev, eventDispatched: true }));
+      } catch (e) {
+        console.error('Failed to dispatch event:', e);
+        setDebugInfo((prev: DebugInfo) => ({ ...prev, eventError: e }));
+      }
 
-      // Refresh the profile data
+      // Refresh the profile data one more time to ensure we have the latest
       const { data: refreshedProfile, error: refreshError } = await supabase
         .from('profiles')
         .select('*')
@@ -247,6 +284,7 @@ export default function ProfilePage() {
         });
         
         setDebugInfo((prev: DebugInfo) => ({ ...prev, finalProfile: refreshedProfile }));
+        console.log('Updated local profile state with:', refreshedProfile);
       }
 
       toast.success('Profile updated successfully');
@@ -335,6 +373,83 @@ export default function ProfilePage() {
     }
   };
 
+  const handleDeleteProfile = async () => {
+    if (!user) {
+      toast.error('User not found. Please sign in again.');
+      return;
+    }
+
+    setIsDeleting(true);
+    
+    try {
+      console.log('Deleting profile for user:', user.id);
+      
+      // Delete the user's profile from the profiles table
+      const { error: deleteProfileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', user.id);
+      
+      if (deleteProfileError) {
+        console.error('Error deleting profile:', deleteProfileError);
+        throw deleteProfileError;
+      }
+
+      console.log('Profile deleted successfully');
+      
+      // Reset the profile state to empty values
+      setProfile({
+        full_name: '',
+        email: user.email || '',
+        phone: '',
+        address: '',
+        bio: '',
+        tax_id: ''
+      });
+      
+      setShowDeleteConfirm(false);
+      
+      // Get the current user data to ensure we have the latest
+      const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error('Error getting current user:', userError);
+      } else if (currentUser) {
+        setUser(currentUser);
+        
+        // Dispatch an event to notify other components about the profile deletion
+        try {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('userProfileUpdated', { 
+              detail: { 
+                user: currentUser,
+                profileDeleted: true,
+                timestamp: new Date().toISOString()
+              }
+            }));
+            console.log('Dispatched profile deletion event');
+          }, 0);
+        } catch (e) {
+          console.error('Failed to dispatch profile deletion event:', e);
+        }
+      }
+      
+      // Show success message
+      toast.success('Profile data deleted successfully. Your account is still active.');
+      
+      // Optionally refresh the page
+      setTimeout(() => {
+        router.refresh();
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error during profile deletion:', error);
+      toast.error('Failed to delete profile. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Calculate some statistics
   const totalRecords = recentRecords.length;
   const totalAmount = recentRecords.reduce((sum, record) => sum + Number(record.amount), 0);
@@ -370,6 +485,12 @@ export default function ProfilePage() {
                   <FiEdit className="h-4 w-4 mr-2" />
                   Edit Profile
                 </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                >
+                  Delete Profile
+                </button>
               </>
             ) : (
               <div className="space-x-2">
@@ -401,6 +522,44 @@ export default function ProfilePage() {
           </div>
         </div>
         
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Profile Data</h2>
+              <p className="text-gray-600 dark:text-gray-300 mb-4">
+                Are you sure you want to delete your profile data? This action cannot be undone.
+              </p>
+              <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">
+                <strong>Note:</strong> This will only remove your profile information (name, phone, address, etc.). 
+                Your account will remain active and you can recreate your profile anytime.
+              </p>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteProfile}
+                  disabled={isDeleting}
+                  className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2 inline-block"></div>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Profile Data'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-6">
           {/* Profile Picture */}
           <div className="flex items-center space-x-4">

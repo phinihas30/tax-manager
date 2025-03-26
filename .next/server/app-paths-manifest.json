@@ -1,14 +1,14 @@
 {
   "/_not-found": "app/_not-found.js",
-  "/auth/signin/page": "app/auth/signin/page.js",
   "/auth/signup/page": "app/auth/signup/page.js",
+  "/auth/signin/page": "app/auth/signin/page.js",
   "/page": "app/page.js",
   "/dashboard/indirect-tax/page": "app/dashboard/indirect-tax/page.js",
-  "/dashboard/calculator/page": "app/dashboard/calculator/page.js",
   "/dashboard/page": "app/dashboard/page.js",
-  "/dashboard/settings/page": "app/dashboard/settings/page.js",
+  "/dashboard/calculator/page": "app/dashboard/calculator/page.js",
+  "/dashboard/help/page": "app/dashboard/help/page.js",
   "/dashboard/reports/page": "app/dashboard/reports/page.js",
-  "/dashboard/direct-tax/page": "app/dashboard/direct-tax/page.js",
   "/dashboard/profile/page": "app/dashboard/profile/page.js",
-  "/dashboard/help/page": "app/dashboard/help/page.js"
+  "/dashboard/settings/page": "app/dashboard/settings/page.js",
+  "/dashboard/direct-tax/page": "app/dashboard/direct-tax/page.js"
 }
