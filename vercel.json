@@ -9,16 +9,5 @@
     "deploymentEnabled": {
       "main": true
     }
-  },
-  "env": {
-    "NEXT_PUBLIC_SITE_URL": {
-      "type": "string"
-    },
-    "NEXT_PUBLIC_SUPABASE_URL": {
-      "type": "string"
-    },
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": {
-      "type": "string"
-    }
   }
 } 
