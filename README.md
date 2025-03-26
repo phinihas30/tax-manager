@@ -1,83 +1,91 @@
 # Tax Manager Application
 
-A modern web application for managing tax records, built with Next.js, TypeScript, and Supabase.
+A modern web application for managing and tracking tax records with a clean, responsive UI built with Next.js and Supabase.
 
 ## Features
 
-- User authentication and authorization
-- Direct and Indirect tax record management
-- Tax calculator
-- Reports generation
-- Profile management
-- Settings customization
-- Responsive design with Tailwind CSS
+- **User Authentication**: Secure login and registration using Supabase Auth
+- **Dashboard Overview**: Visualize tax records and payments
+- **Tax Records Management**: Add, edit, and delete tax records
+- **Profile Management**: Update and manage user profile information
+- **Responsive Design**: Works on desktop, tablet, and mobile devices
+- **Dark Mode Support**: Toggle between light and dark themes
+- **Multi-Language Support**: English, Hindi, Kannada, and Telugu
+- **Reports & Analytics**: Generate reports on tax payments and dues
+- **Customizable Settings**: Personalize your experience
 
 ## Tech Stack
 
-- Next.js 14
-- TypeScript
-- Supabase (Authentication & Database)
-- Tailwind CSS
-- React Hook Form
+- **Frontend**: Next.js 14, React, Tailwind CSS
+- **Backend**: Supabase (Authentication, Database, Storage)
+- **Deployment**: Vercel
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 16.x or later
-- npm 7.x or later
-- A Supabase account
+- npm or yarn
+- Supabase account
 
-### Installation
+### Local Development
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/tax-manager.git
-cd tax-manager
-```
+1. Clone the repository
+   ```bash
+   git clone https://github.com/yourusername/tax-manager.git
+   cd tax-manager
+   ```
 
-2. Install dependencies:
-```bash
-npm install
-```
+2. Install dependencies
+   ```bash
+   npm install
+   ```
 
-3. Create a `.env.local` file in the root directory with your Supabase credentials:
-```
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-```
+3. Create a `.env.local` file with your Supabase credentials
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
 
-4. Run the development server:
-```bash
-npm run dev
-```
+4. Start the development server
+   ```bash
+   npm run dev
+   ```
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+5. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-## Building for Production
+### Database Setup
 
-Use the provided build script:
-
-```bash
-# On Windows
-build.bat
-
-# On Unix-based systems
-./build.sh
-```
+1. Create a new project in Supabase
+2. Run the SQL migrations located in the `supabase/migrations` folder
+3. Set up Row Level Security (RLS) policies as defined in the migration files
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
+The application is configured for easy deployment on Vercel:
 
-## Contributing
+1. Push your code to GitHub
+2. Connect your GitHub repository to Vercel
+3. Add the environment variables in the Vercel dashboard
+4. Deploy
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+## Project Structure
+
+```
+tax-manager/
+├── app/                 # Next.js app router
+│   ├── api/             # API routes
+│   ├── auth/            # Authentication pages
+│   ├── dashboard/       # Dashboard and main features
+│   └── ...
+├── components/          # React components
+├── public/              # Static assets
+├── styles/              # Global styles
+├── types/               # TypeScript type definitions
+├── utils/               # Utility functions
+└── ...
+```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details. 
